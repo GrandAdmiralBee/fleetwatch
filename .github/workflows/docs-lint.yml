@@ -1,0 +1,38 @@
+name: docs-lint
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".markdownlint-cli2.jsonc"
+      - ".prettierrc.json"
+      - ".prettierignore"
+      - ".github/workflows/docs-lint.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Markdown lint
+        run: npx --yes markdownlint-cli2@0.18.1 "docs/**/*.md"
+
+      - name: Markdown format check
+        run: npx --yes prettier@3.6.2 --check "docs/**/*.md"
+
+      - name: Hint on failure
+        if: failure()
+        run: |
+          echo "::error::Docs checks failed. Run 'docs-fmt' locally, fix remaining lint errors and push."
