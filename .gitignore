@@ -1,3 +1,9 @@
+# --- Environment ---
+
 .devenv/
 .envrc
 .pre-commit-config.yaml
+
+# --- Github pages ---
+
+docs/book/

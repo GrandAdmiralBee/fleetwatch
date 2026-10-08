@@ -27,6 +27,8 @@
     sqlx-cli
     cargo-nextest
     cargo-deny
+    mdbook
+    mdbook-mermaid
     buf
   ];
 
