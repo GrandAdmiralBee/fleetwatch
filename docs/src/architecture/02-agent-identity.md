@@ -1,105 +1,105 @@
-# 02. Идентичность устройств
+# 02. Device Identity
 
-- **Статус:** черновик v0.1
-- **Дата:** 2026-10-08
-- **Связанные документы:** 01-containers, 03-agent-protocol (не написан), 04-data (не написан)
-- **Область:** только идентичность и доверие **устройств**. Идентичность пользователей и клиентов API будет описана в 06-api.
+- **Status:** draft v0.1
+- **Date:** 2026-10-08
+- **Related documents:** 01-containers, 03-agent-protocol (not written), 04-data (not written)
+- **Scope:** identity and trust for **devices** only. User and API client identity will be described in 06-api.
 
-## 1. Цели и не-цели
+## 1. Goals and non-goals
 
-### Цели
+### Goals
 
-- К системе могут присоединиться только устройства, которые администратор разрешил заранее.
-- У каждого устройства индивидуальная идентичность, поэтому метрики и команды нельзя перепутать, а в аудите видно, кто что сделал.
-- Доступ можно отозвать у одного устройства, не затрагивая остальные.
-- Компрометация сервера не раскрывает приватные ключи устройств.
-- Компрометация промежуточного CA не требует перенастройки доверия на всём парке машин с агентами.
+- Only devices the administrator has approved in advance can join the system.
+- Each device has an individual identity, so metrics and commands cannot be mixed up and the audit log shows who did what.
+- Access can be revoked for a single device without affecting the others.
+- Compromise of the server does not expose device private keys.
+- Compromise of the intermediate CA does not require reconfiguring trust across the whole fleet of agent machines.
 
-### Не-цели
+### Non-goals
 
-- Не продакшен-PKI: нет HSM, нет CRL/OCSP, ротация корня не поддерживается.
-- Не защищаем от root на самом устройстве и от злонамеренного администратора.
-- Не описываем идентичность пользователей и клиентов API.
+- Not production-grade PKI: no HSM, no CRL/OCSP, root rotation is not supported.
+- No protection against root on the device itself or against a malicious administrator.
+- Does not describe user and API client identity.
 
-## 2. Понятия
+## 2. Concepts
 
-| Термин | Значение |
+| Term | Meaning |
 |---|---|
-| `device_id` | UUID устройства, назначается сервером при enrollment |
-| Enrollment-токен | одноразовый секрет, которым устройство подтверждает разрешение на вступление |
-| Join-строка | `<токен>@<хост:порт>#sha256:<отпечаток корня>`, передаётся агенту при установке |
-| CSR | запрос на сертификат с публичным ключом, приватный ключ остаётся на устройстве |
-| Корневой CA (root) | якорь доверия, ключ хранится вне сервера |
-| Промежуточный CA (intermediate) | подписывает сертификаты устройств, ключ лежит на сервере |
-| Статус устройства | `active` или `revoked`, живёт в Postgres, а не в сертификате |
+| `device_id` | Device UUID, assigned by the server at enrollment |
+| Enrollment token | A one-time secret the device uses to prove it is allowed to join |
+| Join string | `<token>@<host:port>#sha256:<root fingerprint>`, given to the agent at install time |
+| CSR | Certificate request containing the public key; the private key stays on the device |
+| Root CA | Trust anchor; its key is stored off the server |
+| Intermediate CA | Signs device certificates; its key lives on the server |
+| Device status | `active` or `revoked`; lives in Postgres, not in the certificate |
 
-## 3. Модель угроз
+## 3. Threat model
 
-| Угроза | Мера | Остаточный риск |
+| Threat | Mitigation | Residual risk |
 |---|---|---|
-| Посторонний регистрирует свое «устройство» | нужен валидный одноразовый токен | утечка токена до использования |
-| Токен подсмотрели или он утёк | TTL порядка часов, одноразовость, в БД хранится хеш | в окне TTL токеном может воспользоваться другой |
-| Подмена сервера при первом контакте | пиннинг отпечатка корня в join-строке | компрометация самой join-строки |
-| Подмена одного устройства другим | `device_id` берётся из проверенного сертификата, а не из сообщений | кража приватного ключа с устройства |
-| Скомпрометировано одно устройство | отзыв по `device_id`, разрыв стрима | окно доставки отзыва до `ingest` (см. раздел 7) |
-| Утечка БД | в БД только хеши токенов и публичные данные | нет |
-| Утечка промежуточного ключа | корень вне сервера, можно выпустить новый промежуточный | перевыпуск сертификатов всего парка |
-| Перебор или флуд `Enroll` | rate limit, высокая энтропия токена, короткий TTL | DoS на публичный порт |
+| An outsider registers their own "device" | a valid one-time token is required | token leaked before use |
+| The token is observed or leaks | TTL on the order of hours, single use, only a hash stored in the DB | within the TTL window someone else can use the token |
+| Server impersonation on first contact | root fingerprint pinned in the join string | the join string itself is compromised |
+| One device impersonates another | `device_id` is taken from the verified certificate, not from messages | theft of the private key from the device |
+| A single device is compromised | revocation by `device_id`, stream teardown | revocation delivery window to `ingest` (see section 9) |
+| DB leak | the DB holds only token hashes and public data | none |
+| Intermediate key leak | root is off the server, a new intermediate can be issued | reissuing certificates for the whole fleet |
+| Brute force or flood of `Enroll` | rate limit, high-entropy token, short TTL | DoS on the public port |
 
-**Вне модели:** root на устройстве, злонамеренный администратор, компрометация корневого ключа.
+**Out of the model:** root on the device, a malicious administrator, compromise of the root key.
 
-## 4. Архитектура доверия
+## 4. Trust architecture
 
 ```mermaid
 flowchart TB
-    root["Корневой CA: ключ вне сервера"]
-    inter["Промежуточный CA: ключ на control-plane"]
-    srv["Серверные сертификаты: control-plane, ingest"]
-    dev["Сертификаты устройств: SAN URI = device_id"]
+    root["Root CA: key off the server"]
+    inter["Intermediate CA: key on control-plane"]
+    srv["Server certificates: control-plane, ingest"]
+    dev["Device certificates: SAN URI = device_id"]
 
-    root -->|"подписал один раз"| inter
+    root -->|"signed once"| inter
     inter --> srv
-    inter -->|"выпускает при Enroll и Renew"| dev
+    inter -->|"issues on Enroll and Renew"| dev
 ```
 
-| Элемент | Где хранится | Кто использует |
+| Element | Where stored | Who uses it |
 |---|---|---|
-| Приватный ключ корня | вне сервера (шифрованный файл у администратора) | только при выпуске или смене промежуточного |
-| Сертификат корня (публичный) | у агентов, control-plane, ingest | проверка цепочки |
-| Приватный ключ промежуточного | control-plane, через `LoadCredential`, права 0600 | подпись сертификатов устройств |
-| Приватный ключ устройства | устройство, генерируется агентом локально | mTLS-соединения |
+| Root private key | off the server (encrypted file held by the administrator) | only when issuing or replacing the intermediate |
+| Root certificate (public) | agents, control-plane, ingest | chain verification |
+| Intermediate private key | control-plane, via `LoadCredential`, mode 0600 | signing device certificates |
+| Device private key | the device, generated locally by the agent | mTLS connections |
 
-Агент и серверы доверяют **корню**. Отпечаток корня вшивается в join-строку и используется для пиннинга при первом контакте.
+The agent and servers trust the **root**. The root fingerprint is embedded in the join string and used for pinning on first contact.
 
-## 5. Компоненты и ответственность
+## 5. Components and responsibilities
 
 ```mermaid
 flowchart LR
-    admin(["Администратор"])
+    admin(["Administrator"])
     agent["agent"]
     cp["control-plane"]
     ingest["ingest"]
     pg[("PostgreSQL")]
     redis[("Redis")]
 
-    admin -->|"REST: создать токен, отозвать устройство"| cp
-    agent -->|"Enroll: TLS + пиннинг корня"| cp
+    admin -->|"REST: create token, revoke device"| cp
+    agent -->|"Enroll: TLS + root pinning"| cp
     agent -->|"Control stream: mTLS"| cp
     agent -->|"Metrics stream: mTLS"| ingest
     cp --> pg
-    cp -->|"статус отзыва"| redis
-    ingest -->|"кэш статуса, TTL порядка минуты"| redis
+    cp -->|"revocation status"| redis
+    ingest -->|"status cache, TTL about a minute"| redis
 ```
 
-| Компонент | Роль в идентичности |
+| Component | Role in identity |
 |---|---|
-| **agent** | генерирует ключ, строит CSR, хранит сертификат, продлевает его |
-| **control-plane** | единственный, кто выдаёт сертификаты и меняет статус устройства. Принимает `Enroll` и `Renew` |
-| **ingest** | только проверяет цепочку и статус устройства. Сертификаты не выпускает |
-| **Postgres** | источник правды: токены, устройства, серийные номера |
-| **Redis** | распространяет статус отзыва, чтобы `ingest` не ходил в Postgres |
+| **agent** | generates the key, builds the CSR, stores the certificate, renews it |
+| **control-plane** | the only component that issues certificates and changes device status. Handles `Enroll` and `Renew` |
+| **ingest** | only verifies the chain and device status. Does not issue certificates |
+| **Postgres** | source of truth: tokens, devices, serial numbers |
+| **Redis** | distributes revocation status so `ingest` does not have to query Postgres |
 
-Подпись выполняется внутри control-plane за трейтом, чтобы реализацию можно было заменить на `step-ca` или Vault:
+Signing happens inside control-plane behind a trait, so the implementation can be swapped for `step-ca` or Vault:
 
 ```rust
 #[async_trait]
@@ -108,182 +108,182 @@ trait CertificateIssuer: Send + Sync {
 }
 ```
 
-Вызывается он только из двух мест: `Enroll` и `Renew`. Других путей выпуска быть не должно.
+It is called from only two places: `Enroll` and `Renew`. There must be no other issuance paths.
 
 ## 6. Enrollment
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Admin as Администратор
+    actor Admin as Administrator
     participant CP as control-plane
     participant Ag as agent
     participant DB as PostgreSQL
 
-    Admin->>CP: создать токен (TTL, метки)
-    CP->>DB: сохранить sha256(token), expires_at
-    CP-->>Admin: join-строка (токен показывается один раз)
-    Admin->>Ag: передать join-строку при установке
-    Ag->>Ag: сгенерировать ключ, построить CSR
-    Ag->>CP: Enroll(token, CSR) по TLS, проверка корня по отпечатку
+    Admin->>CP: create token (TTL, labels)
+    CP->>DB: store sha256(token), expires_at
+    CP-->>Admin: join string (token shown once)
+    Admin->>Ag: pass the join string at install time
+    Ag->>Ag: generate key, build CSR
+    Ag->>CP: Enroll(token, CSR) over TLS, root verified by fingerprint
     CP->>DB: UPDATE ... SET used_at = now() WHERE hash = $1 AND used_at IS NULL AND expires_at > now()
-    DB-->>CP: строка или пусто
-    CP->>CP: issuer.issue(device_id, публичный ключ из CSR)
-    CP->>DB: создать device, записать серийный номер
-    CP-->>Ag: сертификат устройства, сертификат корня
-    Ag->>Ag: сохранить ключ и сертификат, удалить токен
+    DB-->>CP: row or empty
+    CP->>CP: issuer.issue(device_id, public key from CSR)
+    CP->>DB: create device, record serial number
+    CP-->>Ag: device certificate, root certificate
+    Ag->>Ag: store key and certificate, delete token
 ```
 
-Правила:
+Rules:
 
-- **Токен.** 256 бит случайных данных, в БД хранится `sha256`, сравнение за константное время. Показывается администратору один раз.
-- **Одноразовость** обеспечивается атомарным `UPDATE ... WHERE used_at IS NULL`, а не проверкой в коде приложения.
-- **TTL.** Часы. Конкретное значение по умолчанию: открытый вопрос 1.
-- **Метаданные токена** (имя, метки, роль устройства) переходят в запись устройства.
-- **Из CSR берётся только публичный ключ.** Subject, SAN, срок и `extendedKeyUsage` задаёт сервер. Иначе агент мог бы запросить сертификат на чужой `device_id`.
-- **Пиннинг.** Агент отказывается продолжать, если корень в цепочке сервера не совпал с отпечатком из join-строки.
-- **Защита `Enroll`.** Rate limit по IP, одинаковый ответ на любой отказ (не раскрывать, истёк токен или не существует), запись неудачных попыток в аудит.
+- **Token.** 256 bits of random data; the DB stores its `sha256`, compared in constant time. Shown to the administrator once.
+- **Single use** is enforced by an atomic `UPDATE ... WHERE used_at IS NULL`, not by a check in application code.
+- **TTL.** Hours. The specific default is open question 1.
+- **Token metadata** (name, labels, device role) is carried over to the device record.
+- **Only the public key is taken from the CSR.** Subject, SAN, validity and `extendedKeyUsage` are set by the server. Otherwise an agent could request a certificate for someone else's `device_id`.
+- **Pinning.** The agent refuses to continue if the root in the server's chain does not match the fingerprint from the join string.
+- **Protecting `Enroll`.** Per-IP rate limit, an identical response for every failure (do not reveal whether the token expired or never existed), failed attempts written to the audit log.
 
-## 7. Сертификат устройства
+## 7. Device certificate
 
-| Поле | Значение |
+| Field | Value |
 |---|---|
-| Subject Alternative Name | URI: `spiffe://fleetwatch/device/<uuid>` (формат условный, SPIRE не используется) |
-| Срок действия | 90 дней |
-| extendedKeyUsage | только `clientAuth` |
+| Subject Alternative Name | URI: `spiffe://fleetwatch/device/<uuid>` (nominal format, SPIRE is not used) |
+| Validity | 90 days |
+| extendedKeyUsage | `clientAuth` only |
 | basicConstraints | `CA:FALSE` |
-| Серийный номер | случайный, уникальный, сохраняется в БД |
+| Serial number | random, unique, stored in the DB |
 
-Ограничения промежуточного CA: `pathLenConstraint = 0` (не может выпускать подчинённые CA).
+Intermediate CA constraints: `pathLenConstraint = 0` (cannot issue subordinate CAs).
 
-**Где берётся `device_id`.** Сервер извлекает его из проверенного клиентского сертификата (в tonic это интерсептор, кладущий `DeviceId` в расширения запроса). Идентификатор из тела сообщения не используется никогда.
+**Where `device_id` comes from.** The server extracts it from the verified client certificate (in tonic, an interceptor that puts `DeviceId` into the request extensions). An identifier from the message body is never used.
 
-## 8. Жизненный цикл
+## 8. Lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: токен создан
-    Pending --> Active: Enroll успешен
-    Pending --> [*]: токен истёк
-    Active --> Renewing: прошло около 60 дней
-    Renewing --> Active: Renew успешен, новый сертификат
-    Active --> Expired: сертификат истёк без продления
-    Expired --> Active: повторный enrollment
-    Active --> Revoked: действие администратора
-    Renewing --> Revoked: действие администратора
-    Expired --> Revoked: действие администратора
+    [*] --> Pending: token created
+    Pending --> Active: Enroll succeeded
+    Pending --> [*]: token expired
+    Active --> Renewing: about 60 days elapsed
+    Renewing --> Active: Renew succeeded, new certificate
+    Active --> Expired: certificate expired without renewal
+    Expired --> Active: re-enrollment
+    Active --> Revoked: administrator action
+    Renewing --> Revoked: administrator action
+    Expired --> Revoked: administrator action
     Revoked --> [*]
 ```
 
-Статусы `Active` и `Revoked` хранятся в Postgres на уровне **устройства**. `Renewing` и `Expired` производные от срока сертификата.
+The `Active` and `Revoked` statuses are stored in Postgres at the **device** level. `Renewing` and `Expired` are derived from the certificate's validity.
 
-### Продление
+### Renewal
 
-- Агент начинает продление примерно на 60-й день из 90 (за треть до конца). Остаётся запас порядка 30 дней на устройство, которое может быть выключено.
-- `Renew` выполняется **по уже работающему mTLS-каналу** (контрольный стрим или отдельный unary-вызов). Агент присылает новый CSR с новым ключом.
-- Старый сертификат остаётся действительным до своего срока. Серийные номера обоих сохраняются для аудита.
-- Если продление не удалось, агент повторяет с backoff и пишет предупреждение в метрики (`cert_expires_in_seconds`).
+- The agent starts renewal at around day 60 of 90 (a third before the end). That leaves roughly 30 days of margin for a device that may be powered off.
+- `Renew` is performed **over the already working mTLS channel** (the control stream or a separate unary call). The agent sends a new CSR with a new key.
+- The old certificate remains valid until its expiry. Serial numbers of both are kept for audit.
+- If renewal fails, the agent retries with backoff and emits a warning in metrics (`cert_expires_in_seconds`).
 
-### Истёкший сертификат
+### Expired certificate
 
-Устройство, которое было выключено дольше срока, приходит с просроченным сертификатом. **В v1 продление по просроченному сертификату не допускается**: нужен повторный enrollment с новым токеном. Это проще и безопаснее. См. вопрос 3.
+A device that was off for longer than the validity period shows up with an expired certificate. **In v1, renewal with an expired certificate is not allowed**: re-enrollment with a new token is required. This is simpler and safer. See question 3.
 
-### Переустановка
+### Reinstallation
 
-Устройство потеряло ключ (переустановили ОС). Два варианта: новый токен и новая запись, либо администратор явно привязывает новый ключ к старому `device_id`. Решение: вопрос 4.
+The device lost its key (the OS was reinstalled). Two options: a new token and a new record, or the administrator explicitly binds the new key to the old `device_id`. To be decided: question 4.
 
-## 9. Отзыв
+## 9. Revocation
 
-**Источник правды** это поле статуса устройства в Postgres. Сертификаты не отзываются по отдельности, отзывается устройство целиком.
+The **source of truth** is the device status field in Postgres. Certificates are not revoked individually; the device is revoked as a whole.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Admin as Администратор
+    actor Admin as Administrator
     participant CP as control-plane
     participant DB as PostgreSQL
     participant R as Redis
     participant Ing as ingest
     participant Ag as agent
 
-    Admin->>CP: отозвать устройство
-    CP->>DB: статус = revoked, запись в аудит
+    Admin->>CP: revoke device
+    CP->>DB: status = revoked, audit entry
     CP->>R: SET revoked:device_id
-    CP->>Ag: закрыть control stream
-    Ag->>Ing: MetricsBatch по уже открытому mTLS-стриму
-    Ing->>R: кэш статуса (TTL около 60 с)
+    CP->>Ag: close control stream
+    Ag->>Ing: MetricsBatch over the already open mTLS stream
+    Ing->>R: status cache (TTL about 60 s)
     R-->>Ing: revoked
-    Ing-->>Ag: отказ, закрыть стрим
+    Ing-->>Ag: reject, close stream
 ```
 
-### Решение для `ingest` (предположение)
+### Decision for `ingest` (assumption)
 
-`ingest` проверяет **цепочку** сертификата локально, а **статус устройства** сверяет через Redis с локальным кэшем с коротким TTL.
+`ingest` verifies the certificate **chain** locally and checks the **device status** through Redis with a local short-TTL cache.
 
-| Вариант | Оценка |
+| Option | Assessment |
 |---|---|
-| Кэш статуса в ingest с TTL около минуты | **выбрано в качестве предположения**: просто, окно отзыва ограничено TTL |
-| Хождение в Postgres на каждый батч | отвергнуто: горячий путь не должен зависеть от Postgres |
-| Короткие сертификаты без проверки статуса | отвергнуто: 90 дней слишком много, чтобы полагаться на истечение |
+| Status cache in ingest with a TTL of about a minute | **chosen as an assumption**: simple, the revocation window is bounded by the TTL |
+| Querying Postgres for every batch | rejected: the hot path must not depend on Postgres |
+| Short-lived certificates with no status check | rejected: 90 days is too long to rely on expiry |
 
-**Допустимое окно:** отозванное устройство может слать метрики до одного TTL кэша после отзыва (порядка минуты). Ключевая цифра раздела: если нужно жёстче, TTL уменьшается, а нагрузка на Redis растёт.
+**Acceptable window:** a revoked device can keep sending metrics for up to one cache TTL after revocation (on the order of a minute). This is the key number of the section: if it needs to be tighter, the TTL is reduced and the load on Redis grows.
 
-Важная деталь: стрим долгоживущий, поэтому статус проверяется **не только при установке соединения, а периодически и на каждый батч (по кэшу)**. Иначе уже открытый стрим продолжал бы работать после отзыва.
+An important detail: the stream is long-lived, so the status is checked **not only when the connection is established, but periodically and on every batch (via the cache)**. Otherwise an already open stream would keep working after revocation.
 
-В control-plane всё проще: стрим держит он сам, поэтому при отзыве соединение закрывается немедленно.
+In control-plane it is simpler: it holds the stream itself, so the connection is closed immediately on revocation.
 
-## 10. Управление CA
+## 10. CA management
 
-| Тема | Решение v1 |
+| Topic | v1 decision |
 |---|---|
-| Иерархия | root (вне сервера) + intermediate (на сервере) |
-| Создание | одноразовый скрипт в репозитории, запускается руками |
-| Хранение ключа промежуточного | `LoadCredential`, права 0600, не в переменных окружения |
-| Ротация промежуточного | поддерживается: выпускается новый, парк перевыпускает сертификаты через `Renew`, пока старый ещё действителен |
-| Ротация корня | **не поддерживается в v1**, потребует повторного enrollment всего парка |
-| Продакшен-вариант | HSM или Vault PKI, либо `step-ca` через реализацию `CertificateIssuer` |
+| Hierarchy | root (off the server) + intermediate (on the server) |
+| Creation | a one-off script in the repository, run by hand |
+| Intermediate key storage | `LoadCredential`, mode 0600, not in environment variables |
+| Intermediate rotation | supported: a new one is issued, the fleet reissues certificates via `Renew` while the old one is still valid |
+| Root rotation | **not supported in v1**, would require re-enrolling the whole fleet |
+| Production variant | HSM or Vault PKI, or `step-ca` via a `CertificateIssuer` implementation |
 
-## 11. Транспорт
+## 11. Transport
 
-| Вызов | Что аутентифицируется | Как |
+| Call | What is authenticated | How |
 |---|---|---|
-| `Enroll` | сервер агентом | TLS, цепочка проверяется по отпечатку корня; клиентской аутентификации нет, вместо неё токен |
-| Control stream | обе стороны | mTLS |
-| Metrics stream | обе стороны | mTLS (ingest доверяет тому же корню) |
-| Публичный API | клиенты | в 06-api |
+| `Enroll` | the server, by the agent | TLS, chain verified against the root fingerprint; no client authentication, the token takes its place |
+| Control stream | both sides | mTLS |
+| Metrics stream | both sides | mTLS (ingest trusts the same root) |
+| Public API | clients | in 06-api |
 
-Версия TLS и наборы шифров берутся из дефолтов `rustls`. Менять их без причины не нужно.
+TLS version and cipher suites come from the `rustls` defaults. There is no need to change them without a reason.
 
-## 12. Аудит
+## 12. Audit
 
-Пишутся события: токен создан, токен использован, токен просрочен или отвергнут, сертификат выпущен (с серийным номером), сертификат продлён, устройство отозвано, неудачная попытка `Enroll` (источник, причина). В записи: время, `device_id` (если есть), источник, администратор или система.
+Recorded events: token created, token used, token expired or rejected, certificate issued (with serial number), certificate renewed, device revoked, failed `Enroll` attempt (source, reason). Each record has: time, `device_id` (if any), source, administrator or system.
 
-## 13. Данные
+## 13. Data
 
-Подробная схема в 04-data. Здесь только перечень полей.
+The detailed schema is in 04-data. Only the list of fields is given here.
 
-| Сущность | Ключевые поля |
+| Entity | Key fields |
 |---|---|
 | `enrollment_tokens` | id, token_hash, expires_at, used_at, labels, created_by |
 | `devices` | id, name, labels, status, enrolled_at, revoked_at |
 | `device_certificates` | serial, device_id, issued_at, expires_at, superseded_at |
 
-## 14. Что сознательно упрощено
+## 14. What is deliberately simplified
 
-| Упрощение | Почему допустимо | В продакшене |
+| Simplification | Why it is acceptable | In production |
 |---|---|---|
-| Ключ промежуточного CA в файле | один оператор, малый масштаб | HSM, Vault, step-ca |
-| Нет CRL и OCSP | отзыв по статусу устройства через Redis | OCSP stapling или короткие сертификаты |
-| Нет ротации корня | один раз создаётся, редко меняется | процедура перехода с двумя корнями |
-| Простая join-строка | вручную передаёт администратор | подписанный пакет установки, OIDC для устройств |
+| Intermediate CA key in a file | single operator, small scale | HSM, Vault, step-ca |
+| No CRL or OCSP | revocation by device status via Redis | OCSP stapling or short-lived certificates |
+| No root rotation | created once, rarely changed | a migration procedure with two roots |
+| Simple join string | handed over manually by the administrator | signed install package, OIDC for devices |
 
-## 15. Открытые вопросы
+## 15. Open questions
 
-1. **TTL enrollment-токена по умолчанию.** Один час, сутки?
-2. **Окно отзыва.** Подходит ли TTL кэша около минуты или нужно жёстче?
-3. **Просроченный сертификат.** Подтвердить, что в v1 только повторный enrollment, без льготного периода продления.
-4. **Переустановка устройства.** Новый `device_id` или перепривязка ключа к старому?
-5. **Один порт или два.** `Enroll` на отдельном порту без mTLS проще защищать rate limit-ом, но это ещё один открытый порт.
-6. **Нужен ли `device_certificates` в БД целиком** или достаточно серийного номера действующего сертификата в `devices`.
-7. **Подпись команд.** Подписывать ли команды ключом сервера (тема документа 03, но привязана к CA).
-8. **Как `ingest` получает сертификат корня и свой серверный сертификат** при деплое (через Nix-модуль, `LoadCredential`).
+1. **Default enrollment token TTL.** One hour, one day?
+2. **Revocation window.** Is a cache TTL of about a minute acceptable, or does it need to be tighter?
+3. **Expired certificate.** Confirm that in v1 it is re-enrollment only, with no renewal grace period.
+4. **Device reinstallation.** A new `device_id`, or rebinding the key to the old one?
+5. **One port or two.** `Enroll` on a separate port without mTLS is easier to protect with a rate limit, but it is one more open port.
+6. **Whether `device_certificates` is needed in the DB in full**, or whether the serial of the current certificate in `devices` is enough.
+7. **Command signing.** Whether to sign commands with the server key (a topic for document 03, but tied to the CA).
+8. **How `ingest` obtains the root certificate and its own server certificate** at deployment (via a Nix module, `LoadCredential`).

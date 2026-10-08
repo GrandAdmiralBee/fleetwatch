@@ -18,7 +18,7 @@
     ];
   };
 
-  # --- Нативные зависимости ---
+  # --- Dev packages ---
   packages = with pkgs; [
     git
     protobuf
@@ -32,7 +32,7 @@
     buf
   ];
 
-  # --- Сервисы ---
+  # --- Services ---
   services.postgres = {
     enable = true;
     listen_addresses = "127.0.0.1";
@@ -42,14 +42,14 @@
 
   services.redis.enable = true;
 
-  # --- Переменные окружения ---
+  # --- ENV Variables ---
   env = {
     DATABASE_URL = "postgres://127.0.0.1:5432/fleetwatch";
     REDIS_URL = "redis://127.0.0.1:6379";
     RUST_LOG = "info,fleetwatch=debug";
   };
 
-  # --- Dev Команды ---
+  # --- Dev Commands ---
   scripts.db-migrate.exec = "sqlx migrate run";
   scripts.db-prepare.exec = "cargo sqlx prepare --workspace";
 

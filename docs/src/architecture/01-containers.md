@@ -1,82 +1,82 @@
-# 01. Модули и границы системы
+# 01. Modules and System Boundaries
 
-- **Статус:** черновик v0.1
-- **Дата:** 2026-10-08
-- **Связанные документы:** 02-identity, 03-agent-protocol, 04-data, 05-metrics (пока не написаны)
+- **Status:** draft v0.1
+- **Date:** 2026-10-08
+- **Related documents:** 02-identity, 03-agent-protocol, 04-data, 05-metrics (not written yet)
 
-## 1. Назначение
+## 1. Purpose
 
-Fleetwatch отслеживает парк устройств (серверы homelab, NAS, рабочие станции) и сервисов на них, позволяет безопасно выполнять на устройствах заранее разрешённые команды и хранит метрики с алертингом. Всё управление идёт через **единый публичный API**. WebUI, Telegram-бот, CLI и любые другие клиенты являются его потребителями и не имеют привилегированного доступа к ядру.
+Fleetwatch tracks a fleet of devices (homelab servers, NAS, workstations) and the services running on them. It lets you safely run pre-approved commands on devices, and it stores metrics with alerting. All management goes through a **single public API**. The WebUI, Telegram bot, CLI and any other clients are consumers of that API and have no privileged access to the core.
 
-Этот документ фиксирует **какие модули есть, за что отвечают и кто с кем говорит**. Детали протоколов, схемы данных и модель доверия описаны в отдельных документах.
+This document records **which modules exist, what each is responsible for, and who talks to whom**. Protocol details, data schemas and the trust model are described in separate documents.
 
-### Не-цели
+### Non-goals
 
-- Не замена Prometheus/Grafana: набор метрик ограничен, язык запросов не нужен.
-- Не multi-tenant: один владелец, одна организация.
-- Не продакшен-PKI: ключ CA лежит в файле (см. 02-identity).
-- Не оркестратор: система не разворачивает сервисы, а наблюдает и выполняет allowlist-команды.
-- Не привязана к конкретному клиенту: ни один фронтенд не является частью ядра.
+- Not a replacement for Prometheus/Grafana: the set of metrics is limited and no query language is needed.
+- Not multi-tenant: one owner, one organization.
+- Not production-grade PKI: the CA key lives in a file (see 02-identity).
+- Not an orchestrator: the system does not deploy services, it observes them and runs allowlisted commands.
+- Not tied to a specific client: no frontend is part of the core.
 
-## 2. Контекст (уровень 1)
+## 2. Context (level 1)
 
 ```mermaid
 flowchart LR
-    admin(["Администратор"])
-    clients(["Клиенты API: WebUI, Telegram-бот, CLI, ..."])
+    admin(["Administrator"])
+    clients(["API clients: WebUI, Telegram bot, CLI, ..."])
     fw["Fleetwatch"]
-    dev(["Устройства с агентами"])
-    svc(["Сервисы на устройствах: Jellyfin, Sonarr, Radarr, Immich"])
-    channels(["Каналы уведомлений: Telegram, webhook, email, ..."])
+    dev(["Devices with agents"])
+    svc(["Services on devices: Jellyfin, Sonarr, Radarr, Immich"])
+    channels(["Notification channels: Telegram, webhook, email, ..."])
 
     admin --> clients
-    clients -->|"REST + OpenAPI, события в реальном времени"| fw
-    dev -->|"gRPC, mTLS, соединение инициирует агент"| fw
+    clients -->|"REST + OpenAPI, real-time events"| fw
+    dev -->|"gRPC, mTLS, connection initiated by the agent"| fw
     dev -.->|"localhost: HTTP, systemd"| svc
-    fw -->|"алерты"| channels
+    fw -->|"alerts"| channels
 ```
 
-| Участник | Роль | Примечание |
+| Actor | Role | Notes |
 |---|---|---|
-| Администратор | создаёт токены, смотрит состояние, отправляет команды | работает через любой клиент |
-| Клиенты API | интерфейс для человека | заменяемы, ядро о них ничего не знает кроме типа клиента в аудите |
-| Устройства | запускают агента, сами устанавливают соединение | серверу не нужен сетевой доступ к устройствам |
-| Сервисы | источник метрик уровней L1/L2 | доступны только агенту на localhost, ключи API не покидают устройство |
-| Каналы уведомлений | получатели исходящих алертов | подключаются адаптерами, набор расширяем |
+| Administrator | creates tokens, views state, sends commands | works through any client |
+| API clients | human-facing interface | replaceable; the core knows nothing about them except the client type recorded in the audit log |
+| Devices | run the agent and establish the connection themselves | the server needs no network access to devices |
+| Services | source of L1/L2 metrics | reachable only by the agent on localhost; API keys never leave the device |
+| Notification channels | recipients of outgoing alerts | plugged in as adapters; the set is extensible |
 
-## 3. Контейнеры (уровень 2)
+## 3. Containers (level 2)
 
 ```mermaid
 flowchart TB
-    subgraph device["Устройство"]
+    subgraph device["Device"]
         agent["agent"]
-        local(["сервисы на устройстве + systemd"])
+        local(["services on the device + systemd"])
         agent -.->|"HTTP, /metrics, D-Bus"| local
     end
 
-    subgraph fw["Fleetwatch: ядро"]
-        cp["control-plane: API gateway + домен"]
+    subgraph fw["Fleetwatch: core"]
+        cp["control-plane: API gateway + domain"]
         ingest["ingest"]
-        writer["metrics-writer (этап 6)"]
-        alerting["alerting (этап 6)"]
+        writer["metrics-writer (stage 6)"]
+        alerting["alerting (stage 6)"]
         loadgen["loadgen"]
 
         pg[("PostgreSQL")]
         redis[("Redis")]
         ts[("TimescaleDB")]
-        kafka[["Kafka (этап 6)"]]
+        kafka[["Kafka (stage 6)"]]
     end
 
-    subgraph ext["Вне ядра: клиенты и каналы"]
+    subgraph ext["Outside the core: clients and channels"]
         web(["WebUI"])
-        tgbot(["Telegram-бот"])
+        tgbot(["Telegram bot"])
         cli(["CLI"])
-        notif(["Адаптеры каналов: Telegram, webhook, ..."])
+        notif(["Channel adapters: Telegram, webhook, ..."])
     end
 
-    agent -->|"gRPC bidi stream, mTLS: heartbeat, команды"| cp
+    agent -->|"gRPC bidi stream, mTLS: heartbeat, commands"| cp
     agent -->|"gRPC, mTLS: MetricsBatch"| ingest
-    loadgen -.->|"тот же протокол, что и agent"| cp
+    loadgen -.->|"same protocol as agent"| cp
     loadgen -.-> ingest
 
     web -->|"REST, SSE"| cp
@@ -85,54 +85,54 @@ flowchart TB
 
     cp --> pg
     cp --> redis
-    ingest -->|"этапы 4-5: напрямую"| ts
-    ingest -.->|"этап 6"| kafka
+    ingest -->|"stages 4-5: direct"| ts
+    ingest -.->|"stage 6"| kafka
     kafka -.-> writer
     writer -.-> ts
     kafka -.-> alerting
-    alerting -.->|"события алертов"| pg
-    alerting -.->|"доставка через интерфейс Notifier"| notif
+    alerting -.->|"alert events"| pg
+    alerting -.->|"delivery via Notifier interface"| notif
 ```
 
-Пунктир означает связь, которой пока нет (этап 6) или которая отличается от финальной. Блок «Вне ядра» это отдельные процессы или репозитории, которые зависят только от опубликованного API.
+A dashed line means a connection that does not exist yet (stage 6) or that differs from the final design. The "Outside the core" block consists of separate processes or repositories that depend only on the published API.
 
-## 4. Ответственность модулей
+## 4. Module responsibilities
 
-| Модуль | Отвечает за | Владеет данными | Не делает | Протоколы |
+| Module | Responsible for | Owns data | Does not do | Protocols |
 |---|---|---|---|---|
-| **agent** | сбор метрик, исполнение разрешённых команд, heartbeat, переподключение | локальный конфиг, ключ и сертификат устройства, буфер метрик | не принимает входящих соединений, не хранит секреты сервера, не исполняет произвольный shell | gRPC клиент; localhost HTTP, D-Bus |
-| **control-plane** | enrollment и выдача сертификатов, идентичность устройств, состояние, команды, пользователи, клиенты и RBAC, аудит, **публичный API и поток событий для клиентов** | Postgres (кроме рядов метрик), Redis | не принимает метрики высокой частоты, не считает алерты, не содержит логики конкретных клиентов | gRPC сервер для агентов; REST и SSE для клиентов |
-| **ingest** | приём батчей метрик, валидация, запись | ничем (stateless) | не принимает команды и не меняет состояние устройств | gRPC сервер; запись в Timescale, позже в Kafka |
-| **metrics-writer** | чтение Kafka, пакетная запись в Timescale, DLQ | ряды метрик в Timescale | не отдаёт API | Kafka consumer |
-| **alerting** | вычисление правил, формирование уведомлений, передача их в каналы | состояние правил | не знает, как устроен конкретный канал, не изменяет метрики и устройства | Kafka consumer; интерфейс `Notifier` |
-| **Клиенты API** (WebUI, Telegram-бот, CLI) | представление и ввод | своё локальное состояние (сессии, привязки чатов) | не имеют собственной бизнес-логики и прямого доступа к БД, Redis и Kafka | только публичный API |
-| **Адаптеры каналов** | доставка уведомления в конкретный канал | настройки канала | не вычисляют правила | зависит от канала |
-| **loadgen** | имитация N агентов для нагрузочных тестов | ничем | не используется в продакшене | gRPC |
+| **agent** | metric collection, running allowed commands, heartbeat, reconnection | local config, device key and certificate, metrics buffer | does not accept incoming connections, does not store server secrets, does not run arbitrary shell | gRPC client; localhost HTTP, D-Bus |
+| **control-plane** | enrollment and certificate issuance, device identity, state, commands, users, clients and RBAC, audit, **public API and event stream for clients** | Postgres (except metric series), Redis | does not accept high-frequency metrics, does not evaluate alerts, contains no client-specific logic | gRPC server for agents; REST and SSE for clients |
+| **ingest** | receiving metric batches, validation, writing | nothing (stateless) | does not accept commands and does not change device state | gRPC server; writes to Timescale, later to Kafka |
+| **metrics-writer** | reading Kafka, batch writes to Timescale, DLQ | metric series in Timescale | does not serve an API | Kafka consumer |
+| **alerting** | evaluating rules, building notifications, handing them to channels | rule state | does not know how a specific channel works, does not modify metrics or devices | Kafka consumer; `Notifier` interface |
+| **API clients** (WebUI, Telegram bot, CLI) | presentation and input | their own local state (sessions, chat bindings) | have no business logic of their own and no direct access to the DB, Redis or Kafka | public API only |
+| **Channel adapters** | delivering a notification to a specific channel | channel settings | do not evaluate rules | depends on the channel |
+| **loadgen** | simulating N agents for load tests | nothing | not used in production | gRPC |
 
-## 5. Контракт с клиентами
+## 5. Client contract
 
-Это главное правило, которое делает фронт заменяемым.
+This is the main rule that makes the frontend replaceable.
 
-1. **Единственный источник правды: OpenAPI-спецификация** (генерируется из кода, коммитится, изменения проверяются в CI). Клиенты и CLI могут генерироваться из неё.
-2. **Нулевые привилегии у клиентов.** Любое действие, доступное WebUI, доступно и боту через тот же эндпоинт с теми же проверками прав. Скрытых «админских» ручек для собственного фронта нет.
-3. **Ядро не отдаёт представление.** Никакого HTML или форматированных под мессенджер текстов в ответах API, только данные и коды ошибок. Форматирование это работа клиента.
-4. **События в реальном времени.** Для подписки на изменения (статус устройства, результат команды, сработавший алерт) используется один механизм, **SSE** (опционально WebSocket позже). Клиентам не нужно опрашивать API.
-5. **Единый формат ошибок и пагинация** для всех ресурсов.
-6. **Версионирование API** (`/v1/...`). Несовместимые изменения только в новой версии.
-7. **Аутентификация клиентов.** Каждый клиент получает собственные учётные данные (сервисный аккаунт или токен), а в аудите записывается и пользователь, и тип клиента. Как именно бот сопоставляет пользователя Telegram с пользователем системы, это вопрос бота, а не ядра (см. вопрос 7).
+1. **The single source of truth is the OpenAPI specification** (generated from code, committed, changes checked in CI). Clients and the CLI can be generated from it.
+2. **Clients have zero privileges.** Any action available to the WebUI is available to the bot through the same endpoint with the same permission checks. There are no hidden "admin" endpoints for our own frontend.
+3. **The core does not serve presentation.** No HTML or messenger-formatted text in API responses, only data and error codes. Formatting is the client's job.
+4. **Real-time events.** A single mechanism, **SSE** (optionally WebSocket later), is used to subscribe to changes (device status, command result, fired alert). Clients do not need to poll the API.
+5. **A uniform error format and pagination** for all resources.
+6. **API versioning** (`/v1/...`). Breaking changes only in a new version.
+7. **Client authentication.** Each client gets its own credentials (a service account or token), and the audit log records both the user and the client type. How exactly the bot maps a Telegram user to a system user is the bot's concern, not the core's (see question 7).
 
-## 6. Исходящие уведомления
+## 6. Outgoing notifications
 
-Клиент API и канал уведомлений это разные вещи, и держать их раздельно полезно:
+An API client and a notification channel are different things, and keeping them separate is useful:
 
-| | Клиент API | Канал уведомлений |
+| | API client | Notification channel |
 |---|---|---|
-| Направление | клиент запрашивает и подписывается | система отправляет сама |
-| Инициатор | человек | событие алерта |
-| Пример | открыл WebUI, отправил команду боту | алерт «устройство offline» ушёл в чат |
-| Реализация | потребитель REST и SSE | адаптер за интерфейсом `Notifier` |
+| Direction | the client requests and subscribes | the system sends on its own |
+| Initiator | a human | an alert event |
+| Example | opened the WebUI, sent a command to the bot | a "device offline" alert went to a chat |
+| Implementation | consumer of REST and SSE | adapter behind the `Notifier` interface |
 
-Telegram-бот может играть обе роли, но это два независимых механизма: интерактивная часть использует API, а доставка алертов использует адаптер.
+A Telegram bot can play both roles, but they are two independent mechanisms: the interactive part uses the API, and alert delivery uses an adapter.
 
 ```rust
 trait Notifier: Send + Sync {
@@ -141,47 +141,47 @@ trait Notifier: Send + Sync {
 }
 ```
 
-Правила, куда и что отправлять (маршрутизация по серьёзности, по устройству, по времени суток), хранятся в данных alerting. Новый канал это новый адаптер, ядро не меняется.
+The rules for where and what to send (routing by severity, by device, by time of day) are stored in alerting data. A new channel is a new adapter; the core does not change.
 
-## 7. Владение хранилищами
+## 7. Storage ownership
 
-| Хранилище | Содержимое | Единственный писатель | Читатели |
+| Storage | Contents | Sole writer | Readers |
 |---|---|---|---|
-| PostgreSQL | устройства, токены, команды, пользователи, клиенты, аудит, outbox | control-plane | control-plane, alerting (события) |
-| Redis | presence (TTL-ключи), pub/sub для потока событий | control-plane | control-plane |
-| TimescaleDB | ряды метрик, агрегаты | ingest (этапы 4-5), metrics-writer (позже) | control-plane (запросы для API) |
-| Kafka | `device.metrics`, `device.events`, `device.metrics.dlq` | ingest, control-plane (через outbox) | metrics-writer, alerting |
+| PostgreSQL | devices, tokens, commands, users, clients, audit, outbox | control-plane | control-plane, alerting (events) |
+| Redis | presence (TTL keys), pub/sub for the event stream | control-plane | control-plane |
+| TimescaleDB | metric series, aggregates | ingest (stages 4-5), metrics-writer (later) | control-plane (queries for the API) |
+| Kafka | `device.metrics`, `device.events`, `device.metrics.dlq` | ingest, control-plane (via outbox) | metrics-writer, alerting |
 
-Правило: **у каждого хранилища ровно один писатель-владелец схемы**. Если появляется второй, это сигнал к пересмотру границ.
+Rule: **each storage has exactly one writer that owns its schema**. If a second one appears, that is a signal to revisit the boundaries.
 
-## 8. Принятые решения (по состоянию на сегодня)
+## 8. Decisions made (as of today)
 
-| Решение | Статус | Где обосновано |
+| Decision | Status | Rationale in |
 |---|---|---|
-| Соединение всегда инициирует агент | решено | 03-agent-protocol |
-| Идентичность через enrollment-токен и mTLS | решено | 02-identity |
-| Метрики собираются агентом локально, секреты сервисов с сервера не передаются | решено | 05-metrics |
-| Метрики идут отдельным путём (`ingest`), а не через стрим команд | предположение | см. вопрос 1 |
-| Kafka появляется после работающего конвейера без неё | решено | 05-metrics |
-| Любой клиент работает только через публичный API, ядро не знает о конкретных клиентах | решено | раздел 5 |
-| Уведомления идут через интерфейс `Notifier`, отдельно от API клиентов | решено | раздел 6 |
-| Монорепо для ядра, клиенты могут жить отдельно | предположение | ADR-0001 (написать) |
-| Отдельные стримы для `control-plane` и `ingest` | решено | ADR-0002 (написать) |
+| The agent always initiates the connection | decided | 03-agent-protocol |
+| Identity via enrollment token and mTLS | decided | 02-identity |
+| Metrics are collected locally by the agent; service secrets are never sent to the server | decided | 05-metrics |
+| Metrics take a separate path (`ingest`) rather than going through the command stream | assumption | see question 1 |
+| Kafka is introduced after the pipeline works without it | decided | 05-metrics |
+| Any client works only through the public API; the core does not know about specific clients | decided | section 5 |
+| Notifications go through the `Notifier` interface, separate from API clients | decided | section 6 |
+| Monorepo for the core; clients may live separately | assumption | ADR-0001 (to be written) |
+| Separate streams for `control-plane` and `ingest` | decided | ADR-0002 (to be written) |
 
-## 9. Открытые вопросы
+## 9. Open questions
 
-1. **Как ingest узнаёт об отзыве устройства.** Ему нужно читать статус из Postgres или Redis, а это связь, которой на диаграмме нет. Варианты: кэш статусов в ingest, список отозванных в Redis, короткие сертификаты без проверки отзыва.
-2. **Где живёт состояние alerting.** Правила и их текущие состояния (firing, resolved): в Postgres, в Redis или в самом процессе.
-3. **Timescale в одном инстансе Postgres или отдельно.** В dev это одна база, в продакшене стоит решить, чтобы тяжёлые запросы не мешали control-plane.
-4. **Кто отдаёт метрики в API.** Запросы рядов напрямую из Timescale через control-plane или отдельный read-сервис.
-5. **Нужен ли отдельный сервис для outbox-relay** или это задача внутри control-plane.
-6. **Как клиент получает права.** Один сервисный токен на бота (бот сам решает, кому из пользователей Telegram что можно) или привязка каждого пользователя чата к пользователю системы с передачей его прав. Второй вариант безопаснее, но сложнее.
-7. **SSE или WebSocket для потока событий**, и откуда поток берётся (Redis pub/sub внутри control-plane или Kafka).
-8. **Где живут клиенты:** в том же репозитории (проще, общий CI) или в отдельных (честнее проверяет, что API достаточен).
-9. **Хранение настроек каналов и маршрутов алертов:** Postgres в схеме alerting или в control-plane через API.
+1. **How ingest learns about device revocation.** It would need to read status from Postgres or Redis, a connection that is not on the diagram. Options: a status cache in ingest, a revoked list in Redis, short-lived certificates with no revocation check.
+2. **Where alerting state lives.** Rules and their current states (firing, resolved): in Postgres, in Redis, or in the process itself.
+3. **Timescale in the same Postgres instance or separate.** In dev it is one database; in production it is worth separating so heavy queries do not affect control-plane.
+4. **Who serves metrics to the API.** Series queries straight from Timescale via control-plane, or a separate read service.
+5. **Whether a separate service is needed for the outbox relay** or whether it is a task inside control-plane.
+6. **How a client gets permissions.** One service token per bot (the bot itself decides which Telegram users may do what), or binding each chat user to a system user and passing along that user's permissions. The second is safer but more complex.
+7. **SSE or WebSocket for the event stream**, and where the stream comes from (Redis pub/sub inside control-plane, or Kafka).
+8. **Where clients live:** in the same repository (simpler, shared CI) or in separate ones (a more honest check that the API is sufficient).
+9. **Where channel settings and alert routes are stored:** Postgres in the alerting schema, or in control-plane via the API.
 
-## 10. Что дальше
+## 10. Next steps
 
-- 03-agent-protocol: форма стрима и команды (закроет вопрос 1).
-- 04-data: схема Postgres и Timescale (вопросы 3, 4).
-- 06-api: ресурсы, события, аутентификация клиентов (вопросы 7, 8).
+- 03-agent-protocol: stream shape and commands (will close question 1).
+- 04-data: Postgres and Timescale schema (questions 3, 4).
+- 06-api: resources, events, client authentication (questions 7, 8).
