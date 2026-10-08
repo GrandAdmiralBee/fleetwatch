@@ -7,6 +7,7 @@
 ## Context
 
 This project (in its initial imaginatory state) includes several binaries:
+
 - Agent
 - Control plane
 - ingest
@@ -22,15 +23,15 @@ This project also uses **1 shared protocol** is developed by **One** person, use
 - Minimum effort for one developer
 - Reproducible dev environment
 - Ability to deploy services independently from each other
-- Clear API and its boundaries for its clients  
+- Clear API and its boundaries for its clients
 
 ## Considered Options
 
-| Option | Pros | Cons |
-|---|---|---|
-| Cargo workspace, monorepo | shared `proto`, one commit for contract change, one CI, one build cache | every commit triggers checks. Can be manages with `crane` and cache |
-| Repo per service | Independent releases and access rights | desycn `proto`, duplication of CI. Extra overhead for one developer |
-| Core monorepo + repo per client | Proof that API is enough for clients | More than one repo |
+| Option                          | Pros                                                                    | Cons                                                                |
+| ------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Cargo workspace, monorepo       | shared `proto`, one commit for contract change, one CI, one build cache | every commit triggers checks. Can be manages with `crane` and cache |
+| Repo per service                | Independent releases and access rights                                  | desycn `proto`, duplication of CI. Extra overhead for one developer |
+| Core monorepo + repo per client | Proof that API is enough for clients                                    | More than one repo                                                  |
 
 ## Decision (proposition for now)
 
@@ -40,8 +41,6 @@ This project also uses **1 shared protocol** is developed by **One** person, use
 
 - **Root key doesn't live on the server.** Its creation, updation and etc is managed via a script.
 
-
 ## Revisit When and If
 
 Revisit this descision when agent's amount is too big to be left without key auditioning.
-

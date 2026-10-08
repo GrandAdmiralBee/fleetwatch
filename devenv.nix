@@ -58,6 +58,15 @@
     nixfmt.enable = true;
     rustfmt.enable = true;
     clippy.enable = true;
+
+    prettier-docs = {
+      enable = true;
+      name = "prettier (docs)";
+      entry = "${pkgs.prettier}/bin/prettier --write";
+      files = "^docs/.*\\.md$";
+      excludes = [ "^docs/book/" ];
+      language = "system";
+    };
   };
 
   enterShell = ''
