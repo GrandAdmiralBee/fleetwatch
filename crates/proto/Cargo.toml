@@ -1,0 +1,10 @@
+[package]
+name = "proto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+prost = { version = "0.14.4", features = ["default", "derive", "no-recursion-limit", "std"] }
+
+[build-dependencies]
+prost-build = "0.14"
