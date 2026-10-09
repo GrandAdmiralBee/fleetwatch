@@ -23,28 +23,28 @@
 
 ## 2. Concepts
 
-| Term | Meaning |
-|---|---|
-| `device_id` | Device UUID, assigned by the server at enrollment |
-| Enrollment token | A one-time secret the device uses to prove it is allowed to join |
-| Join string | `<token>@<host:port>#sha256:<root fingerprint>`, given to the agent at install time |
-| CSR | Certificate request containing the public key; the private key stays on the device |
-| Root CA | Trust anchor; its key is stored off the server |
-| Intermediate CA | Signs device certificates; its key lives on the server |
-| Device status | `active` or `revoked`; lives in Postgres, not in the certificate |
+| Term             | Meaning                                                                             |
+| ---------------- | ----------------------------------------------------------------------------------- |
+| `device_id`      | Device UUID, assigned by the server at enrollment                                   |
+| Enrollment token | A one-time secret the device uses to prove it is allowed to join                    |
+| Join string      | `<token>@<host:port>#sha256:<root fingerprint>`, given to the agent at install time |
+| CSR              | Certificate request containing the public key; the private key stays on the device  |
+| Root CA          | Trust anchor; its key is stored off the server                                      |
+| Intermediate CA  | Signs device certificates; its key lives on the server                              |
+| Device status    | `active` or `revoked`; lives in Postgres, not in the certificate                    |
 
 ## 3. Threat model
 
-| Threat | Mitigation | Residual risk |
-|---|---|---|
-| An outsider registers their own "device" | a valid one-time token is required | token leaked before use |
-| The token is observed or leaks | TTL on the order of hours, single use, only a hash stored in the DB | within the TTL window someone else can use the token |
-| Server impersonation on first contact | root fingerprint pinned in the join string | the join string itself is compromised |
-| One device impersonates another | `device_id` is taken from the verified certificate, not from messages | theft of the private key from the device |
-| A single device is compromised | revocation by `device_id`, stream teardown | revocation delivery window to `ingest` (see section 9) |
-| DB leak | the DB holds only token hashes and public data | none |
-| Intermediate key leak | root is off the server, a new intermediate can be issued | reissuing certificates for the whole fleet |
-| Brute force or flood of `Enroll` | rate limit, high-entropy token, short TTL | DoS on the public port |
+| Threat                                   | Mitigation                                                            | Residual risk                                          |
+| ---------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------ |
+| An outsider registers their own "device" | a valid one-time token is required                                    | token leaked before use                                |
+| The token is observed or leaks           | TTL on the order of hours, single use, only a hash stored in the DB   | within the TTL window someone else can use the token   |
+| Server impersonation on first contact    | root fingerprint pinned in the join string                            | the join string itself is compromised                  |
+| One device impersonates another          | `device_id` is taken from the verified certificate, not from messages | theft of the private key from the device               |
+| A single device is compromised           | revocation by `device_id`, stream teardown                            | revocation delivery window to `ingest` (see section 9) |
+| DB leak                                  | the DB holds only token hashes and public data                        | none                                                   |
+| Intermediate key leak                    | root is off the server, a new intermediate can be issued              | reissuing certificates for the whole fleet             |
+| Brute force or flood of `Enroll`         | rate limit, high-entropy token, short TTL                             | DoS on the public port                                 |
 
 **Out of the model:** root on the device, a malicious administrator, compromise of the root key.
 
@@ -62,12 +62,12 @@ flowchart TB
     inter -->|"issues on Enroll and Renew"| dev
 ```
 
-| Element | Where stored | Who uses it |
-|---|---|---|
-| Root private key | off the server (encrypted file held by the administrator) | only when issuing or replacing the intermediate |
-| Root certificate (public) | agents, control-plane, ingest | chain verification |
-| Intermediate private key | control-plane, via `LoadCredential`, mode 0600 | signing device certificates |
-| Device private key | the device, generated locally by the agent | mTLS connections |
+| Element                   | Where stored                                              | Who uses it                                     |
+| ------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| Root private key          | off the server (encrypted file held by the administrator) | only when issuing or replacing the intermediate |
+| Root certificate (public) | agents, control-plane, ingest                             | chain verification                              |
+| Intermediate private key  | control-plane, via `LoadCredential`, mode 0600            | signing device certificates                     |
+| Device private key        | the device, generated locally by the agent                | mTLS connections                                |
 
 The agent and servers trust the **root**. The root fingerprint is embedded in the join string and used for pinning on first contact.
 
@@ -91,13 +91,13 @@ flowchart LR
     ingest -->|"status cache, TTL about a minute"| redis
 ```
 
-| Component | Role in identity |
-|---|---|
-| **agent** | generates the key, builds the CSR, stores the certificate, renews it |
+| Component         | Role in identity                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| **agent**         | generates the key, builds the CSR, stores the certificate, renews it                                |
 | **control-plane** | the only component that issues certificates and changes device status. Handles `Enroll` and `Renew` |
-| **ingest** | only verifies the chain and device status. Does not issue certificates |
-| **Postgres** | source of truth: tokens, devices, serial numbers |
-| **Redis** | distributes revocation status so `ingest` does not have to query Postgres |
+| **ingest**        | only verifies the chain and device status. Does not issue certificates                              |
+| **Postgres**      | source of truth: tokens, devices, serial numbers                                                    |
+| **Redis**         | distributes revocation status so `ingest` does not have to query Postgres                           |
 
 Signing happens inside control-plane behind a trait, so the implementation can be swapped for `step-ca` or Vault:
 
@@ -146,13 +146,13 @@ Rules:
 
 ## 7. Device certificate
 
-| Field | Value |
-|---|---|
+| Field                    | Value                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------- |
 | Subject Alternative Name | URI: `spiffe://fleetwatch/device/<uuid>` (nominal format, SPIRE is not used) |
-| Validity | 90 days |
-| extendedKeyUsage | `clientAuth` only |
-| basicConstraints | `CA:FALSE` |
-| Serial number | random, unique, stored in the DB |
+| Validity                 | 90 days                                                                      |
+| extendedKeyUsage         | `clientAuth` only                                                            |
+| basicConstraints         | `CA:FALSE`                                                                   |
+| Serial number            | random, unique, stored in the DB                                             |
 
 Intermediate CA constraints: `pathLenConstraint = 0` (cannot issue subordinate CAs).
 
@@ -220,11 +220,11 @@ sequenceDiagram
 
 `ingest` verifies the certificate **chain** locally and checks the **device status** through Redis with a local short-TTL cache.
 
-| Option | Assessment |
-|---|---|
+| Option                                              | Assessment                                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------------- |
 | Status cache in ingest with a TTL of about a minute | **chosen as an assumption**: simple, the revocation window is bounded by the TTL |
-| Querying Postgres for every batch | rejected: the hot path must not depend on Postgres |
-| Short-lived certificates with no status check | rejected: 90 days is too long to rely on expiry |
+| Querying Postgres for every batch                   | rejected: the hot path must not depend on Postgres                               |
+| Short-lived certificates with no status check       | rejected: 90 days is too long to rely on expiry                                  |
 
 **Acceptable window:** a revoked device can keep sending metrics for up to one cache TTL after revocation (on the order of a minute). This is the key number of the section: if it needs to be tighter, the TTL is reduced and the load on Redis grows.
 
@@ -234,23 +234,23 @@ In control-plane it is simpler: it holds the stream itself, so the connection is
 
 ## 10. CA management
 
-| Topic | v1 decision |
-|---|---|
-| Hierarchy | root (off the server) + intermediate (on the server) |
-| Creation | a one-off script in the repository, run by hand |
-| Intermediate key storage | `LoadCredential`, mode 0600, not in environment variables |
-| Intermediate rotation | supported: a new one is issued, the fleet reissues certificates via `Renew` while the old one is still valid |
-| Root rotation | **not supported in v1**, would require re-enrolling the whole fleet |
-| Production variant | HSM or Vault PKI, or `step-ca` via a `CertificateIssuer` implementation |
+| Topic                    | v1 decision                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Hierarchy                | root (off the server) + intermediate (on the server)                                                         |
+| Creation                 | a one-off script in the repository, run by hand                                                              |
+| Intermediate key storage | `LoadCredential`, mode 0600, not in environment variables                                                    |
+| Intermediate rotation    | supported: a new one is issued, the fleet reissues certificates via `Renew` while the old one is still valid |
+| Root rotation            | **not supported in v1**, would require re-enrolling the whole fleet                                          |
+| Production variant       | HSM or Vault PKI, or `step-ca` via a `CertificateIssuer` implementation                                      |
 
 ## 11. Transport
 
-| Call | What is authenticated | How |
-|---|---|---|
-| `Enroll` | the server, by the agent | TLS, chain verified against the root fingerprint; no client authentication, the token takes its place |
-| Control stream | both sides | mTLS |
-| Metrics stream | both sides | mTLS (ingest trusts the same root) |
-| Public API | clients | in 06-api |
+| Call           | What is authenticated    | How                                                                                                   |
+| -------------- | ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `Enroll`       | the server, by the agent | TLS, chain verified against the root fingerprint; no client authentication, the token takes its place |
+| Control stream | both sides               | mTLS                                                                                                  |
+| Metrics stream | both sides               | mTLS (ingest trusts the same root)                                                                    |
+| Public API     | clients                  | in 06-api                                                                                             |
 
 TLS version and cipher suites come from the `rustls` defaults. There is no need to change them without a reason.
 
@@ -262,20 +262,20 @@ Recorded events: token created, token used, token expired or rejected, certifica
 
 The detailed schema is in 04-data. Only the list of fields is given here.
 
-| Entity | Key fields |
-|---|---|
-| `enrollment_tokens` | id, token_hash, expires_at, used_at, labels, created_by |
-| `devices` | id, name, labels, status, enrolled_at, revoked_at |
+| Entity                | Key fields                                              |
+| --------------------- | ------------------------------------------------------- |
+| `enrollment_tokens`   | id, token_hash, expires_at, used_at, labels, created_by |
+| `devices`             | id, name, labels, status, enrolled_at, revoked_at       |
 | `device_certificates` | serial, device_id, issued_at, expires_at, superseded_at |
 
 ## 14. What is deliberately simplified
 
-| Simplification | Why it is acceptable | In production |
-|---|---|---|
-| Intermediate CA key in a file | single operator, small scale | HSM, Vault, step-ca |
-| No CRL or OCSP | revocation by device status via Redis | OCSP stapling or short-lived certificates |
-| No root rotation | created once, rarely changed | a migration procedure with two roots |
-| Simple join string | handed over manually by the administrator | signed install package, OIDC for devices |
+| Simplification                | Why it is acceptable                      | In production                             |
+| ----------------------------- | ----------------------------------------- | ----------------------------------------- |
+| Intermediate CA key in a file | single operator, small scale              | HSM, Vault, step-ca                       |
+| No CRL or OCSP                | revocation by device status via Redis     | OCSP stapling or short-lived certificates |
+| No root rotation              | created once, rarely changed              | a migration procedure with two roots      |
+| Simple join string            | handed over manually by the administrator | signed install package, OIDC for devices  |
 
 ## 15. Open questions
 
