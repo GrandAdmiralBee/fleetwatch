@@ -1,10 +1,11 @@
-# Project description
+# Fleetwatch project documentation
 
-## Higher level architectural documentation
+# Higher level architectural documentation
 
 - [Application and Goal](./architecture/01-containers.md)
 - [Agent Identity](./architecture/02-agent-identity.md)
+- [Agent Protocol](./architecture/03-agent-protocol.md)
 
-## Architecture Decision Records
+# Architecture Decision Records
 
 - [Monorepo and cargo workspaces](./adr/adr0001-monorepo-workspaces.md)
