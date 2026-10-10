@@ -10,7 +10,9 @@ dependencies = [
  "proto",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tonic",
+ "tracing",
 ]
 
 [[package]]

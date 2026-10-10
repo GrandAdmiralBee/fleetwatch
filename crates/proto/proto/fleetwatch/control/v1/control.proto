@@ -5,23 +5,21 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 service ControlService {
-  rpc OpenSession(stream ConnectRequest) returns (stream ConnectResponse);
+  rpc OpenSession(stream SessionRequest) returns (stream SessionResponse);
 }
 
-message ConnectRequest {
+message SessionRequest {
   oneof payload {
     Hello hello = 1;
     Heartbeat heartbeat = 2;
-    // 3-9 reserved: CommandResult, CapabilityUpdate
   }
 }
 
-message ConnectResponse {
+message SessionResponse {
   oneof payload {
     Welcome welcome = 1;
     HeartbeatAck heartbeat_ack = 2;
     Disconnect disconnect = 3;
-    // 4-9 reserved: CommandRequest, ConfigUpdate
   }
 }
 
