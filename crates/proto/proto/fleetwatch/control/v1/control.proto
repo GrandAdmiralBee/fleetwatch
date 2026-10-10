@@ -1,0 +1,61 @@
+syntax = "proto3";
+package fleetwatch.control.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+service ControlService {
+  rpc OpenSession(stream ConnectRequest) returns (stream ConnectResponse);
+}
+
+message ConnectRequest {
+  oneof payload {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    // 3-9 reserved: CommandResult, CapabilityUpdate
+  }
+}
+
+message ConnectResponse {
+  oneof payload {
+    Welcome welcome = 1;
+    HeartbeatAck heartbeat_ack = 2;
+    Disconnect disconnect = 3;
+    // 4-9 reserved: CommandRequest, ConfigUpdate
+  }
+}
+
+message Hello {
+  uint32 protocol_version = 1;
+  string agent_version = 2;
+  string hostname = 3;
+  repeated string capabilities = 4;
+}
+
+message Welcome {
+  uint32 protocol_version = 1;
+  string session_id = 2;
+  google.protobuf.Duration heartbeat_interval = 3;
+}
+
+message Heartbeat {
+  uint64 seq = 1;
+  google.protobuf.Timestamp sent_at = 2;
+}
+
+message HeartbeatAck {
+  uint64 seq = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+message Disconnect {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_VERSION_MISMATCH = 1;
+    REASON_REPLACED = 2;
+    REASON_SHUTDOWN = 3;
+    REASON_PROTOCOL_VIOLATION = 4;
+  }
+  Reason reason = 1;
+  string message = 2;
+}

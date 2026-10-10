@@ -1,3 +1,6 @@
 [workspace]
-members = ["crates/proto"]
+members = ["crates/agent", "crates/control-plane","crates/proto"]
+
+[workspace.dependencies]
+proto = { package = "proto", path = "crates/proto" }
 
