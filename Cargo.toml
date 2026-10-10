@@ -1,6 +1,40 @@
 [workspace]
-members = ["crates/agent", "crates/control-plane","crates/proto"]
+resolver = "3"
+members = ["crates/*"]
+
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "forbid"
+
 
 [workspace.dependencies]
 proto = { package = "proto", path = "crates/proto" }
+
+
+# Async
+tokio        = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio-stream = "0.1"
+tokio-util   = "0.7"
+
+# gRPC
+tonic        = "0.14"
+tonic-prost  = "0.14"
+prost        = "0.14"
+prost-types  = "0.14"
+tonic-prost-build = "0.14"
+
+# Errors and logs
+thiserror = "2"
+anyhow    = "1"
+tracing   = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
