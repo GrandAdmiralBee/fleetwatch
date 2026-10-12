@@ -29,20 +29,60 @@ pub struct ControlConnection {
     tx: Option<mpsc::Sender<SessionRequest>>,
     inbound: tonic::Streaming<SessionResponse>,
     session: SessionInfo,
+    // Cheap `Channel` clone. Doesn't allow channel worker to
+    // finish, while stream is active
+    _channel: Channel,
 }
 
 impl ControlConnection {
+    pub(super) fn new(
+        tx: mpsc::Sender<SessionRequest>,
+        inbound: Streaming<SessionResponse>,
+        session: SessionInfo,
+        channel: Channel,
+    ) -> Self {
+        Self {
+            tx: Some(tx),
+            inbound,
+            session,
+            _channel: channel,
+        }
+    }
+
+    /// Session info recieved from `Welcome` msg
     pub fn session(&self) -> &SessionInfo {
-        todo!()
+        &self.session
     }
-    pub async fn send(&self, _msg: ToServer) -> anyhow::Result<(), GrpcError> {
-        todo!()
+
+    /// Send msg to server
+    /// if the queue is full -> backpressure
+    pub async fn send(&self, msg: ToServer) -> anyhow::Result<(), GrpcError> {
+        let tx = self.tx.as_ref().ok_or(GrpcError::Closed)?;
+        tx.send(convert::to_wire(msg))
+            .await
+            .map_err(|e| GrpcError::Stream(format!("server side of the stream is gone: {}", &e)))
     }
+
+    /// Next msg from server
+    /// if `Ok(None)` is received - the server closed the stream
     pub async fn recv(&mut self) -> anyhow::Result<Option<FromServer>, GrpcError> {
-        todo!()
+        // Using loop to receive only approved by `from_wire` msg
+        loop {
+            let msg = match self.inbound.message().await {
+                Ok(Some(m)) => m,
+                Ok(None) => return Ok(None),
+                Err(status) => return Err(GrpcError::Stream(status.to_string())),
+            };
+            if let Some(ev) = convert::from_wire(msg) {
+                return Ok(Some(ev));
+            }
+        }
     }
+
+    /// Close the agent side of channel.
+    /// We can now read the stream till the end with `recv()`
     pub fn close(&mut self) {
-        todo!()
+        self.tx = None;
     }
 }
 
@@ -51,13 +91,9 @@ pub async fn connect(
     hello: HelloInfo,
 ) -> anyhow::Result<ControlConnection, GrpcError> {
     let channel = open_channel(cfg).await?;
-    let (tx, mut inbound) = open_stream(channel, hello).await?;
+    let (tx, mut inbound) = open_stream(channel.clone(), hello).await?;
     let session = await_welcome(&mut inbound, cfg.welcome_timeout).await?;
-    Ok(ControlConnection {
-        tx: Some(tx),
-        inbound,
-        session,
-    })
+    Ok(ControlConnection::new(tx, inbound, session, channel))
 }
 
 async fn open_channel(cfg: &GrpcConfig) -> anyhow::Result<Channel, GrpcError> {
