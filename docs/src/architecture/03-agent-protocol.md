@@ -82,3 +82,14 @@ stateDiagram-v2
     Active --> Closed: no heartbeat for 3 intervals
     Closed --> [*]
 ```
+
+## Connection parameters controlled by server
+
+| Parameter                           | Value                                          | Source           |
+| ----------------------------------- | ---------------------------------------------- | ---------------- |
+| `Hello` timeout                     | 5s                                             | `ServerConfig`   |
+| Heartbeat interval                  | from `Welcome`                                 | `ServerConfig`   |
+| Allowed misses                      | 3                                              | `ServerConfig`   |
+| not `Hello` as first msg or timeout | `Disconnect(PROTOCOL_VIOLATION)`               | -                |
+| Replacement                         | New session takes place, the old one goes away | session registry |
+| outgoing msg queue                  | limited - 32. Overflow closes the session      | session          |
